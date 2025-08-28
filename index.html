@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estilista Virtual Gemini</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 900px;
+            padding: 1.5rem;
+        }
+        .camera-container {
+            position: relative;
+            width: 100%;
+            height: 250px;
+            background-color: #374151;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #d1d5db;
+        }
+        .camera-container video, .camera-container canvas, .camera-container img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .btn {
+            background-color: #4f46e5;
+            color: #ffffff;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.75rem;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .btn:hover {
+            background-color: #4338ca;
+            transform: translateY(-1px);
+        }
+        .btn:disabled {
+            background-color: #a5b4fc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #ffffff;
+            border-radius: 50%;
+            width: 1.5rem;
+            height: 1.5rem;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center p-4">
+
+<div class="container bg-white shadow-xl rounded-2xl flex flex-col items-center space-y-8">
+    <h1 class="text-3xl sm:text-4xl font-bold text-gray-800 text-center mt-6">Estilista Virtual</h1>
+    <p class="text-gray-600 text-center max-w-lg">
+        Tire uma foto sua e uma foto de uma roupa para ver como ela ficaria em você.
+    </p>
+
+    <div class="w-full flex flex-col md:flex-row space-y-6 md:space-y-0 md:space-x-6">
+        <!-- Câmera e Botões para Foto da Pessoa -->
+        <div class="w-full md:w-1/2 flex flex-col items-center space-y-4">
+            <div class="camera-container">
+                <video id="person-video" class="hidden" autoplay playsinline></video>
+                <canvas id="person-canvas" class="hidden"></canvas>
+                <img id="person-image-preview" class="hidden" alt="Pré-visualização da pessoa">
+                <span id="person-placeholder" class="text-center">Pré-visualização da pessoa</span>
+            </div>
+            <div class="flex space-x-2 w-full justify-center">
+                <button id="start-person-camera-btn" class="btn text-sm">Iniciar Câmera</button>
+                <button id="take-person-photo-btn" class="btn text-sm" disabled>Tirar Foto</button>
+            </div>
+        </div>
+
+        <!-- Câmera e Botões para Foto da Roupa -->
+        <div class="w-full md:w-1/2 flex flex-col items-center space-y-4">
+            <div class="camera-container">
+                <video id="clothing-video" class="hidden" autoplay playsinline></video>
+                <canvas id="clothing-canvas" class="hidden"></canvas>
+                <img id="clothing-image-preview" class="hidden" alt="Pré-visualização da roupa">
+                <span id="clothing-placeholder" class="text-center">Pré-visualização da roupa</span>
+            </div>
+            <div class="flex space-x-2 w-full justify-center">
+                <button id="start-clothing-camera-btn" class="btn text-sm">Iniciar Câmera</button>
+                <button id="take-clothing-photo-btn" class="btn text-sm" disabled>Tirar Foto</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Botão de Geração -->
+    <button id="generate-btn" class="btn flex items-center justify-center space-x-2 w-full max-w-sm" disabled>
+        <span id="button-text">Gerar Imagem</span>
+        <div id="spinner" class="spinner hidden"></div>
+    </button>
+    
+    <!-- Área de Resultado -->
+    <div id="result-area" class="w-full hidden mt-6">
+        <h2 class="text-2xl font-semibold text-gray-800 text-center mb-4">Resultado</h2>
+        <div class="w-full bg-gray-100 rounded-xl p-4 flex justify-center items-center">
+            <img id="result-image" class="w-full h-auto rounded-xl shadow-lg" alt="Imagem gerada pela IA">
+            <p id="error-message" class="text-red-500 hidden text-center">Ocorreu um erro. Tente novamente.</p>
+        </div>
+    </div>
+
+</div>
+
+<script type="module">
+    // Configurações do Firebase para autenticação (necessário para o ambiente Canvas)
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    // Importações de módulos do Firebase
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+    // Variáveis globais e referências a elementos DOM
+    let personImageBase64 = null;
+    let clothingImageBase64 = null;
+    let authReady = false;
+
+    const personVideo = document.getElementById('person-video');
+    const personCanvas = document.getElementById('person-canvas');
+    const personImagePreview = document.getElementById('person-image-preview');
+    const personPlaceholder = document.getElementById('person-placeholder');
+    const startPersonCameraBtn = document.getElementById('start-person-camera-btn');
+    const takePersonPhotoBtn = document.getElementById('take-person-photo-btn');
+    
+    const clothingVideo = document.getElementById('clothing-video');
+    const clothingCanvas = document.getElementById('clothing-canvas');
+    const clothingImagePreview = document.getElementById('clothing-image-preview');
+    const clothingPlaceholder = document.getElementById('clothing-placeholder');
+    const startClothingCameraBtn = document.getElementById('start-clothing-camera-btn');
+    const takeClothingPhotoBtn = document.getElementById('take-clothing-photo-btn');
+
+    const generateBtn = document.getElementById('generate-btn');
+    const buttonText = document.getElementById('button-text');
+    const spinner = document.getElementById('spinner');
+    const resultArea = document.getElementById('result-area');
+    const resultImage = document.getElementById('result-image');
+    const errorMessage = document.getElementById('error-message');
+
+    // Inicializa o Firebase
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    /**
+     * Autentica o usuário com o token fornecido ou de forma anônima.
+     * Esta etapa é crucial para interagir com as APIs no ambiente Canvas.
+     */
+    async function authenticate() {
+        try {
+            if (initialAuthToken) {
+                await signInWithCustomToken(auth, initialAuthToken);
+            } else {
+                await signInAnonymously(auth);
+            }
+            authReady = true;
+            console.log("Autenticação concluída com sucesso.");
+        } catch (error) {
+            console.error("Falha na autenticação:", error);
+            errorMessage.textContent = 'Falha na autenticação. Tente recarregar a página.';
+            errorMessage.classList.remove('hidden');
+        }
+    }
+
+    /**
+     * Inicia a transmissão da câmera e exibe o vídeo.
+     * @param {HTMLVideoElement} videoElement O elemento de vídeo a ser usado.
+     * @param {HTMLButtonElement} takePhotoBtn O botão para tirar foto.
+     * @param {HTMLElement} placeholder O elemento placeholder a ser ocultado.
+     */
+    const startCamera = async (videoElement, takePhotoBtn, placeholder) => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            videoElement.srcObject = stream;
+            videoElement.classList.remove('hidden');
+            placeholder.classList.add('hidden');
+            takePhotoBtn.disabled = false;
+        } catch (err) {
+            console.error("Erro ao acessar a câmera:", err);
+            errorMessage.textContent = 'Não foi possível acessar a câmera. Por favor, permita o acesso e tente novamente.';
+            errorMessage.classList.remove('hidden');
+        }
+    };
+
+    /**
+     * Tira uma foto da transmissão da câmera e exibe a imagem.
+     * @param {HTMLVideoElement} videoElement O elemento de vídeo.
+     * @param {HTMLCanvasElement} canvasElement O elemento canvas para desenhar a imagem.
+     * @param {HTMLImageElement} imagePreviewElement O elemento de imagem para exibir a pré-visualização.
+     * @param {Function} setter A função para definir a variável Base64.
+     */
+    const takePhoto = (videoElement, canvasElement, imagePreviewElement, setter) => {
+        const videoTrack = videoElement.srcObject.getVideoTracks()[0];
+        const { width, height } = videoTrack.getSettings();
+        
+        canvasElement.width = width;
+        canvasElement.height = height;
+        const context = canvasElement.getContext('2d');
+        context.drawImage(videoElement, 0, 0, width, height);
+
+        const imageDataUrl = canvasElement.toDataURL('image/png');
+        setter(imageDataUrl.split(',')[1]);
+
+        imagePreviewElement.src = imageDataUrl;
+        imagePreviewElement.classList.remove('hidden');
+        videoElement.classList.add('hidden');
+        updateButtonState();
+
+        // Parar o stream da câmera para economizar recursos
+        videoTrack.stop();
+        videoElement.srcObject = null;
+    };
+
+    /**
+     * Habilita/desabilita o botão de geração com base na disponibilidade das imagens.
+     */
+    const updateButtonState = () => {
+        generateBtn.disabled = !(personImageBase64 && clothingImageBase64);
+    };
+
+    // Adiciona listeners para os botões da câmera
+    startPersonCameraBtn.addEventListener('click', () => startCamera(personVideo, takePersonPhotoBtn, personPlaceholder));
+    takePersonPhotoBtn.addEventListener('click', () => takePhoto(personVideo, personCanvas, personImagePreview, (base64) => personImageBase64 = base64));
+
+    startClothingCameraBtn.addEventListener('click', () => startCamera(clothingVideo, takeClothingPhotoBtn, clothingPlaceholder));
+    takeClothingPhotoBtn.addEventListener('click', () => takePhoto(clothingVideo, clothingCanvas, clothingImagePreview, (base64) => clothingImageBase64 = base64));
+
+    /**
+     * Chama a API do Gemini para gerar a imagem combinada.
+     */
+    const generateImage = async () => {
+        if (!authReady || generateBtn.disabled) return;
+
+        // Limpa resultados anteriores e mostra o carregamento
+        resultArea.classList.add('hidden');
+        errorMessage.classList.add('hidden');
+        buttonText.textContent = '';
+        spinner.classList.remove('hidden');
+        generateBtn.disabled = true;
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=`;
+        
+        // Define o prompt em português para guiar a IA
+        const promptText = "Gerar uma imagem da pessoa vestindo a roupa. A roupa deve estar sobreposta à pessoa, ajustando-se de forma natural e realista. A iluminação e o estilo da imagem devem ser consistentes.";
+
+        const payload = {
+            contents: [{
+                parts: [
+                    { text: promptText },
+                    { inlineData: { mimeType: "image/png", data: personImageBase64 } },
+                    { inlineData: { mimeType: "image/png", data: clothingImageBase64 } }
+                ]
+            }],
+            generationConfig: {
+                responseModalities: ["IMAGE"]
+            }
+        };
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            // Adiciona a verificação do status da resposta
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error("Erro completo da API:", JSON.stringify(errorData, null, 2));
+                throw new Error(`Erro da API: ${response.status} - ${errorData.error?.message || JSON.stringify(errorData)}`);
+            }
+
+            const result = await response.json();
+            const base64Data = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+
+            if (base64Data) {
+                resultImage.src = `data:image/png;base64,${base64Data}`;
+                resultArea.classList.remove('hidden');
+            } else {
+                throw new Error("Resposta da API não contém dados de imagem válidos.");
+            }
+        } catch (error) {
+            console.error("Erro ao gerar a imagem:", error);
+            errorMessage.textContent = 'Ocorreu um erro ao gerar a imagem. Tente novamente.';
+            errorMessage.classList.remove('hidden');
+        } finally {
+            spinner.classList.add('hidden');
+            buttonText.textContent = 'Gerar Imagem';
+            generateBtn.disabled = false;
+        }
+    };
+    
+    // Adiciona o listener para o botão de geração
+    generateBtn.addEventListener('click', generateImage);
+
+    // Inicia o processo de autenticação ao carregar a página
+    window.onload = authenticate;
+
+</script>
+</body>
+</html>
